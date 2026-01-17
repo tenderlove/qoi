@@ -17,4 +17,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'chunky_png', '>= 1.4.0'
   s.add_development_dependency 'minitest', '>= 5.15'
   s.add_development_dependency 'rake', '>= 13.0'
+  s.add_development_dependency 'net-http', '>= 0.9.1'
+  s.add_development_dependency 'uri', '>= 0.11.1'
+  s.add_development_dependency 'rubyzip', '>= 3.2.2'
 end

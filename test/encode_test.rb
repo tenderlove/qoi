@@ -2,8 +2,9 @@ require "helper"
 
 module QOI
   class EncodeTest < Test
+    IMGS = File.join(File.dirname(__FILE__), "images", "qoi_test_images")
     def test_encoding
-      png = ChunkyPNG::Image.from_file("/Users/aaron/Downloads/qoi_test_images/dice.png")
+      png = ChunkyPNG::Image.from_file(File.join(IMGS, "dice.png"))
       p png.width
       p png.height
       p png.to_rgb_stream.bytesize
