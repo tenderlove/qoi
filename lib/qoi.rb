@@ -20,10 +20,10 @@ module QOI
 
   class Buffer
     def self.pixel_hash px # :nodoc:
-      r = px & 0xFF
-      g = (px >> 8) & 0xFF
-      b = (px >> 16) & 0xFF
-      a = (px >> 24) & 0xFF
+      r = (px >> 24) & 0xFF
+      g = (px >> 16) & 0xFF
+      b = (px >> 8) & 0xFF
+      a = px & 0xFF
       (r * 3 + g * 5 + b * 7 + a * 11) % 64
     end
 
@@ -38,10 +38,9 @@ module QOI
       total_pixels = width * height
       buff = String.new(capacity: total_pixels * 4, encoding: Encoding::BINARY)
 
-      # Pixel format: 0xAABBGGRR (ABGR, high to low bits)
-      # When packed as little-endian 32-bit, becomes R,G,B,A bytes
-      #    AABBGGRR
-      px = 0xFF000000
+      # Pixel format: 0xRRGGBBAA (RGBA, high to low bits)
+      # When packed as big-endian 32-bit, becomes R,G,B,A bytes
+      px = 0x000000FF
       seen = Array.new(64, 0)
       seen[pixel_hash(px)] = px
 
@@ -55,22 +54,22 @@ module QOI
           r = reader.getbyte(ctx, index); index += 1
           g = reader.getbyte(ctx, index); index += 1
           b = reader.getbyte(ctx, index); index += 1
-          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
           seen[pixel_hash(px)] = px
-          [px].pack("V", buffer: buff)
+          [px].pack("N", buffer: buff)
 
         elsif byte == 0xFF # QOI_OP_RGBA
           r = reader.getbyte(ctx, index); index += 1
           g = reader.getbyte(ctx, index); index += 1
           b = reader.getbyte(ctx, index); index += 1
           a = reader.getbyte(ctx, index); index += 1
-          px = (a << 24) | (b << 16) | (g << 8) | r
+          px = (r << 24) | (g << 16) | (b << 8) | a
           seen[pixel_hash(px)] = px
-          [px].pack("V", buffer: buff)
+          [px].pack("N", buffer: buff)
 
         elsif byte & 0xC0 == 0xC0 # QOI_OP_RUN
           run = byte & 0x3F
-          (run + 1).times { [px].pack("V", buffer: buff) }
+          (run + 1).times { [px].pack("N", buffer: buff) }
           pixels_decoded += run
 
         elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
@@ -79,28 +78,28 @@ module QOI
           dr_dg = (byte2 >> 4) - 8
           db_dg = (byte2 & 0x0F) - 8
 
-          r = ((px & 0xFF) + dg + dr_dg) & 0xFF
-          g = (((px >> 8) & 0xFF) + dg) & 0xFF
-          b = (((px >> 16) & 0xFF) + dg + db_dg) & 0xFF
-          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          r = (((px >> 24) & 0xFF) + dg + dr_dg) & 0xFF
+          g = (((px >> 16) & 0xFF) + dg) & 0xFF
+          b = (((px >> 8) & 0xFF) + dg + db_dg) & 0xFF
+          px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
           seen[pixel_hash(px)] = px
-          [px].pack("V", buffer: buff)
+          [px].pack("N", buffer: buff)
 
         elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
           dr = ((byte >> 4) & 0x03) - 2
           dg = ((byte >> 2) & 0x03) - 2
           db = (byte & 0x03) - 2
 
-          r = ((px & 0xFF) + dr) & 0xFF
-          g = (((px >> 8) & 0xFF) + dg) & 0xFF
-          b = (((px >> 16) & 0xFF) + db) & 0xFF
-          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          r = (((px >> 24) & 0xFF) + dr) & 0xFF
+          g = (((px >> 16) & 0xFF) + dg) & 0xFF
+          b = (((px >> 8) & 0xFF) + db) & 0xFF
+          px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
           seen[pixel_hash(px)] = px
-          [px].pack("V", buffer: buff)
+          [px].pack("N", buffer: buff)
 
         else # QOI_OP_INDEX
           px = seen[byte]
-          [px].pack("V", buffer: buff)
+          [px].pack("N", buffer: buff)
         end
 
         pixels_decoded += 1
