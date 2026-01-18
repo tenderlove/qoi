@@ -33,15 +33,17 @@ module QOI
 
         width, height, channels, colorspace = file.read(10).unpack("NNCC")
 
-        buff = "\0".b * width * height * channels
+        output_channels = 4
+        buff = "\0".b * width * height * output_channels
 
         previous_pixel = [0, 0, 0, 255].pack("CCCC")
-        seen_pixels = ["\0\0\0\0".b] * 64
+        seen_pixels = Array.new(64) { "\0\0\0\0".b }
+        seen_pixels[hash(0, 0, 0, 255)] = previous_pixel.dup
 
         offset = 0
 
         while byte = file.getbyte
-          break if offset >= width * height * channels
+          break if offset >= width * height * output_channels
 
           if byte == 0xFE # RGB
             r = file.getbyte
@@ -56,8 +58,8 @@ module QOI
             set_seen seen_pixels, hash(r, g, b, a), previous_pixel
 
             raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-            buff.bytesplice(offset, channels, previous_pixel)
-            offset += channels
+            buff.bytesplice(offset, output_channels, previous_pixel)
+            offset += output_channels
           elsif byte == 0xFF # RGBA
             r = file.getbyte
             g = file.getbyte
@@ -72,14 +74,14 @@ module QOI
             set_seen seen_pixels, hash(r, g, b, a), previous_pixel
 
             raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-            buff.bytesplice(offset, channels, previous_pixel)
-            offset += channels
+            buff.bytesplice(offset, output_channels, previous_pixel)
+            offset += output_channels
           else
             if byte & 0xC0 == 0xC0 # QOI_OP_RUN
               ((byte & 0x3F) + 1).times do |i|
                 raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-                buff.bytesplice(offset, channels, previous_pixel)
-                offset += channels
+                buff.bytesplice(offset, output_channels, previous_pixel)
+                offset += output_channels
               end
             elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
               dg = (byte & 0x3F) - 32
@@ -100,8 +102,8 @@ module QOI
               set_seen seen_pixels, hash(r, g, b, a), previous_pixel
 
               raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, channels, previous_pixel)
-              offset += channels
+              buff.bytesplice(offset, output_channels, previous_pixel)
+              offset += output_channels
             elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
               dr = ((byte >> 4) & 0x03) - 2
               dg = ((byte >> 2) & 0x03) - 2
@@ -119,19 +121,19 @@ module QOI
               set_seen seen_pixels, hash(r, g, b, a), previous_pixel
 
               raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, channels, previous_pixel)
-              offset += channels
+              buff.bytesplice(offset, output_channels, previous_pixel)
+              offset += output_channels
             else # QOI_OP_INDEX
               index = byte
               previous_pixel = seen_pixels[index].dup
               raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, channels, previous_pixel)
-              offset += channels
+              buff.bytesplice(offset, output_channels, previous_pixel)
+              offset += output_channels
             end
           end
         end
 
-        new width, height, channels, colorspace, buff
+        new width, height, output_channels, colorspace, buff
       end
     end
 

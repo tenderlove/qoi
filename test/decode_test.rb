@@ -4,22 +4,16 @@ module QOI
   class DecodeTest < Test
     IMGS = File.join(File.dirname(__FILE__), "images", "qoi_test_images")
 
-    def test_encoding_dice_png
-      png = ChunkyPNG::Image.from_file(File.join(IMGS, "dice.png"))
-      buff = QOI::Buffer.from_file File.join(IMGS, "dice.qoi"), png.to_rgba_stream
+    %w{ dice edgecase kodim10 kodim23
+        qoi_logo testcard_rgba testcard wikipedia_008 }.each do |name|
+      define_method("test_decode_#{name}") do
+        png = ChunkyPNG::Image.from_file(File.join(IMGS, name + ".png"))
+        buff = QOI::Buffer.from_file File.join(IMGS, name + ".qoi"), png.to_rgba_stream
 
-      assert_equal png.width, buff.width
-      assert_equal png.height, buff.height
-      assert_equal png.to_rgba_stream, buff.buffer
-    end
-
-    def test_encoding_edgecase
-      png = ChunkyPNG::Image.from_file(File.join(IMGS, "edgecase.png"))
-      buff = QOI::Buffer.from_file File.join(IMGS, "edgecase.qoi"), png.to_rgba_stream
-
-      assert_equal png.width, buff.width
-      assert_equal png.height, buff.height
-      assert_equal png.to_rgba_stream, buff.buffer
+        assert_equal png.width, buff.width
+        assert_equal png.height, buff.height
+        assert_equal png.to_rgba_stream, buff.buffer
+      end
     end
   end
 end
