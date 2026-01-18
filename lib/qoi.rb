@@ -19,121 +19,176 @@ module QOI
   end
 
   class Buffer
-    def self.hash r, g, b, a
+    # Pixel format: 0xAABBGGRR (ABGR, high to low bits)
+    # When packed as little-endian 32-bit, becomes R,G,B,A bytes
+
+    def self.pixel_hash px
+      r = px & 0xFF
+      g = (px >> 8) & 0xFF
+      b = (px >> 16) & 0xFF
+      a = (px >> 24) & 0xFF
       (r * 3 + g * 5 + b * 7 + a * 11) % 64
     end
 
-    def self.set_seen seen, index, pixel
-      seen[index] = pixel.dup
+    def self.decode ctx, reader
+      index = 0
+      raise Errors::FormatError unless "qoif".b == reader.read(ctx, index, 4)
+      index += 4
+
+      width, height, channels, colorspace = reader.read(10).unpack("NNCC")
+      index += 10
+
+      total_pixels = width * height
+      buff = String.new(capacity: total_pixels * 4, encoding: Encoding::BINARY)
+
+      #    AABBGGRR
+      px = 0xFF000000
+      seen = Array.new(64, 0)
+      seen[pixel_hash(px)] = px
+
+      pixels_decoded = 0
+
+      while byte = file.getbyte
+        break if pixels_decoded >= total_pixels
+
+        if byte == 0xFE # QOI_OP_RGB
+          r = file.getbyte
+          g = file.getbyte
+          b = file.getbyte
+          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          seen[pixel_hash(px)] = px
+          [px].pack("V", buffer: buff)
+
+        elsif byte == 0xFF # QOI_OP_RGBA
+          r = file.getbyte
+          g = file.getbyte
+          b = file.getbyte
+          a = file.getbyte
+          px = (a << 24) | (b << 16) | (g << 8) | r
+          seen[pixel_hash(px)] = px
+          [px].pack("V", buffer: buff)
+
+        elsif byte & 0xC0 == 0xC0 # QOI_OP_RUN
+          run = byte & 0x3F
+          (run + 1).times { [px].pack("V", buffer: buff) }
+          pixels_decoded += run
+
+        elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
+          dg = (byte & 0x3F) - 32
+          byte2 = file.getbyte
+          dr_dg = (byte2 >> 4) - 8
+          db_dg = (byte2 & 0x0F) - 8
+
+          r = ((px & 0xFF) + dg + dr_dg) & 0xFF
+          g = (((px >> 8) & 0xFF) + dg) & 0xFF
+          b = (((px >> 16) & 0xFF) + dg + db_dg) & 0xFF
+          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          seen[pixel_hash(px)] = px
+          [px].pack("V", buffer: buff)
+
+        elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
+          dr = ((byte >> 4) & 0x03) - 2
+          dg = ((byte >> 2) & 0x03) - 2
+          db = (byte & 0x03) - 2
+
+          r = ((px & 0xFF) + dr) & 0xFF
+          g = (((px >> 8) & 0xFF) + dg) & 0xFF
+          b = (((px >> 16) & 0xFF) + db) & 0xFF
+          px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+          seen[pixel_hash(px)] = px
+          [px].pack("V", buffer: buff)
+
+        else # QOI_OP_INDEX
+          px = seen[byte]
+          [px].pack("V", buffer: buff)
+        end
+
+        pixels_decoded += 1
+        index += 1
+      end
+
+      new width, height, 4, colorspace, buff
     end
 
-    def self.from_file name, reference
+    def self.from_file name
       File.open(name, "rb") do |file|
+        index = 0
         raise Errors::FormatError unless "qoif".b == file.read(4)
+        index += 4
 
         width, height, channels, colorspace = file.read(10).unpack("NNCC")
+        index += 10
 
-        output_channels = 4
-        buff = "\0".b * width * height * output_channels
+        total_pixels = width * height
+        buff = String.new(capacity: total_pixels * 4, encoding: Encoding::BINARY)
 
-        previous_pixel = [0, 0, 0, 255].pack("CCCC")
-        seen_pixels = Array.new(64) { "\0\0\0\0".b }
-        seen_pixels[hash(0, 0, 0, 255)] = previous_pixel.dup
+        #    AABBGGRR
+        px = 0xFF000000
+        seen = Array.new(64, 0)
+        seen[pixel_hash(px)] = px
 
-        offset = 0
+        pixels_decoded = 0
 
         while byte = file.getbyte
-          break if offset >= width * height * output_channels
+          break if pixels_decoded >= total_pixels
 
-          if byte == 0xFE # RGB
+          if byte == 0xFE # QOI_OP_RGB
             r = file.getbyte
             g = file.getbyte
             b = file.getbyte
-            a = previous_pixel.getbyte(3)
+            px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+            seen[pixel_hash(px)] = px
+            [px].pack("V", buffer: buff)
 
-            previous_pixel.setbyte(0, r)
-            previous_pixel.setbyte(1, g)
-            previous_pixel.setbyte(2, b)
-
-            set_seen seen_pixels, hash(r, g, b, a), previous_pixel
-
-            raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-            buff.bytesplice(offset, output_channels, previous_pixel)
-            offset += output_channels
-          elsif byte == 0xFF # RGBA
+          elsif byte == 0xFF # QOI_OP_RGBA
             r = file.getbyte
             g = file.getbyte
             b = file.getbyte
             a = file.getbyte
+            px = (a << 24) | (b << 16) | (g << 8) | r
+            seen[pixel_hash(px)] = px
+            [px].pack("V", buffer: buff)
 
-            previous_pixel.setbyte(0, r)
-            previous_pixel.setbyte(1, g)
-            previous_pixel.setbyte(2, b)
-            previous_pixel.setbyte(3, a)
+          elsif byte & 0xC0 == 0xC0 # QOI_OP_RUN
+            run = byte & 0x3F
+            (run + 1).times { [px].pack("V", buffer: buff) }
+            pixels_decoded += run
 
-            set_seen seen_pixels, hash(r, g, b, a), previous_pixel
+          elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
+            dg = (byte & 0x3F) - 32
+            byte2 = file.getbyte
+            dr_dg = (byte2 >> 4) - 8
+            db_dg = (byte2 & 0x0F) - 8
 
-            raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-            buff.bytesplice(offset, output_channels, previous_pixel)
-            offset += output_channels
-          else
-            if byte & 0xC0 == 0xC0 # QOI_OP_RUN
-              ((byte & 0x3F) + 1).times do |i|
-                raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-                buff.bytesplice(offset, output_channels, previous_pixel)
-                offset += output_channels
-              end
-            elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
-              dg = (byte & 0x3F) - 32
+            r = ((px & 0xFF) + dg + dr_dg) & 0xFF
+            g = (((px >> 8) & 0xFF) + dg) & 0xFF
+            b = (((px >> 16) & 0xFF) + dg + db_dg) & 0xFF
+            px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+            seen[pixel_hash(px)] = px
+            [px].pack("V", buffer: buff)
 
-              byte = file.getbyte
-              dr_dg = (byte >> 4) - 8
-              db_dg = (byte & 0xF) - 8
+          elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
+            dr = ((byte >> 4) & 0x03) - 2
+            dg = ((byte >> 2) & 0x03) - 2
+            db = (byte & 0x03) - 2
 
-              r = previous_pixel.getbyte(0) + dg + dr_dg
-              g = previous_pixel.getbyte(1) + dg
-              b = previous_pixel.getbyte(2) + dg + db_dg
-              a = previous_pixel.getbyte(3)
+            r = ((px & 0xFF) + dr) & 0xFF
+            g = (((px >> 8) & 0xFF) + dg) & 0xFF
+            b = (((px >> 16) & 0xFF) + db) & 0xFF
+            px = (px & 0xFF000000) | (b << 16) | (g << 8) | r
+            seen[pixel_hash(px)] = px
+            [px].pack("V", buffer: buff)
 
-              previous_pixel.setbyte(0, r)
-              previous_pixel.setbyte(1, g)
-              previous_pixel.setbyte(2, b)
-
-              set_seen seen_pixels, hash(r, g, b, a), previous_pixel
-
-              raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, output_channels, previous_pixel)
-              offset += output_channels
-            elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
-              dr = ((byte >> 4) & 0x03) - 2
-              dg = ((byte >> 2) & 0x03) - 2
-              db = (byte & 0x03) - 2
-
-              r = previous_pixel.getbyte(0) + dr
-              g = previous_pixel.getbyte(1) + dg
-              b = previous_pixel.getbyte(2) + db
-              a = previous_pixel.getbyte(3)
-
-              previous_pixel.setbyte(0, r)
-              previous_pixel.setbyte(1, g)
-              previous_pixel.setbyte(2, b)
-
-              set_seen seen_pixels, hash(r, g, b, a), previous_pixel
-
-              raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, output_channels, previous_pixel)
-              offset += output_channels
-            else # QOI_OP_INDEX
-              index = byte
-              previous_pixel = seen_pixels[index].dup
-              raise unless reference.byteslice(offset, 4).bytes == previous_pixel.bytes
-              buff.bytesplice(offset, output_channels, previous_pixel)
-              offset += output_channels
-            end
+          else # QOI_OP_INDEX
+            px = seen[byte]
+            [px].pack("V", buffer: buff)
           end
+
+          pixels_decoded += 1
+          index += 1
         end
 
-        new width, height, output_channels, colorspace, buff
+        new width, height, 4, colorspace, buff
       end
     end
 

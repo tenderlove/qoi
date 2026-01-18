@@ -8,7 +8,7 @@ module QOI
         qoi_logo testcard_rgba testcard wikipedia_008 }.each do |name|
       define_method("test_decode_#{name}") do
         png = ChunkyPNG::Image.from_file(File.join(IMGS, name + ".png"))
-        buff = QOI::Buffer.from_file File.join(IMGS, name + ".qoi"), png.to_rgba_stream
+        buff = QOI::Buffer.from_file File.join(IMGS, name + ".qoi")
 
         assert_equal png.width, buff.width
         assert_equal png.height, buff.height
