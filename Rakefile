@@ -2,12 +2,17 @@ ENV["MT_NO_PLUGINS"] = "1"
 
 require "rake/testtask"
 require "rake/clean"
+require "bundler"
+Bundler::GemHelper.install_tasks
 
 def download from, to
   Dir.mkdir 'tmp' unless File.directory?("tmp")
 
   require "net/http"
   require "net/https"
+  require "fileutils"
+
+  FileUtils.mkdir_p File.dirname(to)
 
   url = URI.parse from
   client = Net::HTTP.new(url.host, url.port)
