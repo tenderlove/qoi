@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+# encoding: ascii-8bit
 
 module QOI
   autoload :VERSION, "qoi/version"
@@ -29,17 +30,17 @@ module QOI
 
     def self.decode ctx, reader # :nodoc:
       index = 0
-      raise Errors::FormatError unless "qoif".b == reader.read(ctx, index, 4)
+      raise Errors::FormatError unless "qoif" == reader.read(ctx, index, 4)
       index += 4
 
       width, height, channels, colorspace = reader.read(ctx, index, 10).unpack("NNCC")
       index += 10
 
       total_pixels = width * height
-      buff = String.new(capacity: total_pixels * 4, encoding: Encoding::BINARY)
+      buff = String.new(capacity: total_pixels * channels, encoding: Encoding::BINARY)
+      writer = channels == 3 ? RGBWriter : RGBAWriter
 
       # Pixel format: 0xRRGGBBAA (RGBA, high to low bits)
-      # When packed as big-endian 32-bit, becomes R,G,B,A bytes
       px = 0x000000FF
       seen = Array.new(64, 0)
       seen[pixel_hash(px)] = px
@@ -55,17 +56,17 @@ module QOI
           px = (reader.read_uint24(ctx, index) << 8) | (px & 0xFF)
           index += 3
           seen[pixel_hash(px)] = px
-          [px].pack("N", buffer: buff)
+          writer.write(px, buff)
 
         elsif byte == 0xFF # QOI_OP_RGBA
           px = reader.read_uint32(ctx, index)
           index += 4
           seen[pixel_hash(px)] = px
-          [px].pack("N", buffer: buff)
+          writer.write(px, buff)
 
         elsif byte & 0xC0 == 0xC0 # QOI_OP_RUN
           run = byte & 0x3F
-          (run + 1).times { [px].pack("N", buffer: buff) }
+          (run + 1).times { writer.write(px, buff) }
           pixels_decoded += run
 
         elsif byte & 0xC0 == 0x80 # QOI_OP_LUMA
@@ -79,7 +80,7 @@ module QOI
           b = (((px >> 8) & 0xFF) + dg + db_dg) & 0xFF
           px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
           seen[pixel_hash(px)] = px
-          [px].pack("N", buffer: buff)
+          writer.write(px, buff)
 
         elsif byte & 0xC0 == 0x40 # QOI_OP_DIFF
           dr = ((byte >> 4) & 0x03) - 2
@@ -91,17 +92,130 @@ module QOI
           b = (((px >> 8) & 0xFF) + db) & 0xFF
           px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
           seen[pixel_hash(px)] = px
-          [px].pack("N", buffer: buff)
+          writer.write(px, buff)
 
         else # QOI_OP_INDEX
           px = seen[byte]
-          [px].pack("N", buffer: buff)
+          writer.write(px, buff)
         end
 
         pixels_decoded += 1
       end
 
-      new width, height, 4, colorspace, buff
+      new width, height, channels, colorspace, buff
+    end
+
+    module RGBReader # :nodoc:
+      def self.read buff, pos
+        (buff.getbyte(pos) << 24) | (buff.getbyte(pos + 1) << 16) | (buff.getbyte(pos + 2) << 8) | 0xFF
+      end
+    end
+
+    module RGBAReader # :nodoc:
+      def self.read buff, pos
+        buff.unpack1("N", offset: pos)
+      end
+    end
+
+    module RGBWriter # :nodoc:
+      def self.write px, buff
+        buff << ((px >> 24) & 0xFF) << ((px >> 16) & 0xFF) << ((px >> 8) & 0xFF)
+      end
+    end
+
+    module RGBAWriter # :nodoc:
+      def self.write px, buff
+        [px].pack("N", buffer: buff)
+      end
+    end
+
+    def self.encode width, height, channels, colorspace, buffer
+      out = String.new(capacity: 14 + width * height * 5 + 8, encoding: Encoding::BINARY)
+
+      # Header
+      out << "qoif"
+      [width, height, channels, colorspace].pack("NNCC", buffer: out)
+
+      # Pixel format: 0xRRGGBBAA (RGBA, high to low bits)
+      previous_pixel = 0x000000FF
+      pixel_lut = Array.new(64, 0)
+      reader = channels == 3 ? RGBReader : RGBAReader
+
+      run = 0
+      total_pixels = width * height * channels
+      last_pixel = total_pixels - channels
+      pos = 0
+
+      while true
+        break unless pos < total_pixels
+
+        pixel = reader.read(buffer, pos)
+
+        if pixel == previous_pixel
+          run += 1
+          if run == 62 || pos == last_pixel
+            out << (0xC0 | (run - 1))
+            run = 0
+          end
+        else
+          if run > 0
+            out << (0xC0 | (run - 1))
+            run = 0
+          end
+
+          index = pixel_hash(pixel)
+          if pixel_lut[index] == pixel
+            out << index
+          else
+            pixel_lut[index] = pixel
+
+            # if the alpha is the same
+            if (pixel & 0xFF) == (previous_pixel & 0xFF)
+              vr = (pixel >> 24) - (previous_pixel >> 24)
+              vg = ((pixel >> 16) & 0xFF) - ((previous_pixel >> 16) & 0xFF)
+              vb = ((pixel >> 8) & 0xFF) - ((previous_pixel >> 8) & 0xFF)
+
+              # Handle wraparound (e.g., 255->0 is +1, not -255)
+              vr = vr - 256 if vr > 127
+              vr = vr + 256 if vr < -127
+              vg = vg - 256 if vg > 127
+              vg = vg + 256 if vg < -127
+              vb = vb - 256 if vb > 127
+              vb = vb + 256 if vb < -127
+
+              vg_r = vr - vg
+              vg_b = vb - vg
+
+              if vr > -3 && vr < 2 && vg > -3 && vg < 2 && vb > -3 && vb < 2
+                # QOI_OP_DIFF
+                out << (0x40 | ((vr + 2) << 4) | ((vg + 2) << 2) | (vb + 2))
+              elsif vg_r > -9 && vg_r < 8 && vg > -33 && vg < 32 && vg_b > -9 && vg_b < 8
+                # QOI_OP_LUMA
+                [0x80 | (vg + 32), ((vg_r + 8) << 4) | (vg_b + 8)].pack("CC", buffer: out)
+              else
+                # QOI_OP_RGB
+                [0xFE_00_00_00 | (pixel >> 8)].pack("N", buffer: out)
+              end
+            else
+              # QOI_OP_RGBA
+              [0xFF, pixel].pack("CN", buffer: out)
+            end
+          end
+        end
+
+        previous_pixel = pixel
+        pos += channels
+      end
+
+      # Flush final run
+      if run > 0
+        out << (0xC0 | (run - 1)).chr
+      end
+
+      # End marker
+      out << "\x00\x00\x00\x00\x00\x00\x00\x01"
+
+      out
     end
 
     module FileHelper # :nodoc:
@@ -162,99 +276,7 @@ module QOI
     end
 
     def encode
-      out = String.new(capacity: 14 + width * height * 5 + 8, encoding: Encoding::BINARY)
-
-      # Header
-      out << "qoif"
-      [width, height, channels, colorspace].pack("NNCC", buffer: out)
-
-      # Pixel format: 0xRRGGBBAA (RGBA, high to low bits)
-      previous_pixel = 0x000000FF
-      pixel_lut = Array.new(64, 0)
-
-      run = 0
-      total_pixels = width * height * channels
-      last_pixel = total_pixels - channels
-      pos = 0
-
-      while true
-        break unless pos < total_pixels
-
-        if channels == 4
-          pixel = buffer.unpack1("N", offset: pos)
-        else
-          # RGB: read 3 bytes and assume alpha = 255
-          r = buffer.getbyte(pos)
-          g = buffer.getbyte(pos + 1)
-          b = buffer.getbyte(pos + 2)
-          pixel = (r << 24) | (g << 16) | (b << 8) | 0xFF
-        end
-
-        if pixel == previous_pixel
-          run += 1
-          if run == 62 || pos == last_pixel
-            out << (0xC0 | (run - 1))
-            run = 0
-          end
-        else
-          if run > 0
-            out << (0xC0 | (run - 1))
-            run = 0
-          end
-
-          index = Buffer.pixel_hash(pixel)
-          if pixel_lut[index] == pixel
-            out << index
-          else
-            pixel_lut[index] = pixel
-
-            # if the alpha is the same
-            if ( (pixel & 0xFF) == (previous_pixel & 0xFF))
-              vr = (pixel >> 24) - (previous_pixel >> 24)
-              vg = ((pixel >> 16) & 0xFF) - ((previous_pixel >> 16) & 0xFF)
-              vb = ((pixel >> 8) & 0xFF) - ((previous_pixel >> 8) & 0xFF)
-
-              # Handle wraparound (e.g., 255->0 is +1, not -255)
-              vr = vr - 256 if vr > 127
-              vr = vr + 256 if vr < -127
-              vg = vg - 256 if vg > 127
-              vg = vg + 256 if vg < -127
-              vb = vb - 256 if vb > 127
-              vb = vb + 256 if vb < -127
-
-              vg_r = vr - vg
-              vg_b = vb - vg
-
-              if vr > -3 && vr < 2 && vg > -3 && vg < 2 && vb > -3 && vb < 2
-                # QOI_OP_DIFF
-                out << (0x40 | ((vr + 2) << 4) | ((vg + 2) << 2) | (vb + 2))
-              elsif vg_r > -9 && vg_r < 8 && vg > -33 && vg < 32 && vg_b > -9 && vg_b < 8
-                # QOI_OP_LUMA
-                [0x80 | (vg + 32), ((vg_r + 8) << 4) | (vg_b + 8)].pack("CC", buffer: out)
-              else
-                # QOI_OP_RGB
-                [0xFE_00_00_00 | (pixel >> 8)].pack("N", buffer: out)
-              end
-            else
-              # QOI_OP_RGBA
-              [0xFF, pixel].pack("CN", buffer: out)
-            end
-          end
-        end
-
-        previous_pixel = pixel
-        pos += channels
-      end
-
-      # Flush final run
-      if run > 0
-        out << (0xC0 | (run - 1)).chr
-      end
-
-      # End marker
-      out << "\x00\x00\x00\x00\x00\x00\x00\x01"
-
-      out
+      Buffer.encode(width, height, channels, colorspace, buffer)
     end
 
     private
