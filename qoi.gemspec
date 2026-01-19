@@ -20,4 +20,6 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'net-http', '>= 0.9.1'
   s.add_development_dependency 'uri', '>= 0.11.1'
   s.add_development_dependency 'rubyzip', '>= 3.2.2'
+
+  s.required_ruby_version '>= 3.3.0'
 end
