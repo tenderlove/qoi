@@ -19,7 +19,7 @@ module QOI
     ALL = 1
   end
 
-  class Buffer
+  class Image
     def self.pixel_hash px # :nodoc:
       r = (px >> 24) & 0xFF
       g = (px >> 16) & 0xFF
@@ -277,7 +277,7 @@ module QOI
     end
 
     def encode
-      Buffer.encode(width, height, channels, colorspace, buffer)
+      Image.encode(width, height, channels, colorspace, buffer)
     end
 
     private

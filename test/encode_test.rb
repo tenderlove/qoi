@@ -16,11 +16,11 @@ module QOI
         original_pixels = channels == 3 ? png.to_rgb_stream : png.to_rgba_stream
 
         # Create QOI buffer and encode it
-        img = QOI::Buffer.new(png.width, png.height, channels, 0, original_pixels)
+        img = QOI::Image.new(png.width, png.height, channels, 0, original_pixels)
         encoded = img.encode
 
         # Verify roundtrip: decode our encoded data and compare pixels
-        decoded = QOI::Buffer.from_buffer(encoded)
+        decoded = QOI::Image.from_buffer(encoded)
         assert_equal png.width, decoded.width, "Width mismatch"
         assert_equal png.height, decoded.height, "Height mismatch"
         assert_equal original_pixels, decoded.buffer, "Pixel data mismatch"
