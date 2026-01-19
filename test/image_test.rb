@@ -113,5 +113,27 @@ module QOI
       assert_equal [100, 150, 200], img.rgb(0, 1)
       assert_equal [0, 0, 0], img.rgb(1, 1)
     end
+
+    def test_buffer_size_mismatch_raises_error
+      # Buffer too small
+      err = assert_raises(QOI::Errors::BufferSizeError) do
+        QOI::Image.new(10, 10, 4, 0, "\x00" * 100)
+      end
+      assert_match(/buffer size 100 does not match expected size 400/, err.message)
+
+      # Buffer too large
+      err = assert_raises(QOI::Errors::BufferSizeError) do
+        QOI::Image.new(2, 2, 3, 0, "\x00" * 20)
+      end
+      assert_match(/buffer size 20 does not match expected size 12/, err.message)
+    end
+
+    def test_buffer_size_correct_does_not_raise
+      # Exact size should work - no exception raised
+      img1 = QOI::Image.new(10, 10, 4, 0, "\x00" * 400)
+      img2 = QOI::Image.new(2, 2, 3, 0, "\x00" * 12)
+      assert_equal 10, img1.width
+      assert_equal 2, img2.width
+    end
   end
 end

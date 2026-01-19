@@ -1,24 +1,59 @@
 # frozen_string_literal: true
 # encoding: ascii-8bit
 
+# QOI (Quite OK Image) format encoder and decoder.
+#
+# QOI is a fast, lossless image compression format that offers decent
+# compression ratios while being simple to implement.
+#
+# @example Decoding a QOI file
+#   image = QOI::Image.from_file("photo.qoi")
+#   puts "#{image.width}x#{image.height}, #{image.channels} channels"
+#
+# @example Encoding an image to QOI
+#   image = QOI::Image.new(100, 100, 4, QOI::Colorspace::SRGB)
+#   image.set_rgba(0, 0, 255, 0, 0, 255)  # Set pixel at (0,0) to red
+#   qoi_data = image.encode
+#
+# @see https://qoiformat.org QOI Format Specification
 module QOI
   autoload :VERSION, "qoi/version"
 
+  # Exception classes for QOI operations.
   module Errors
+    # Base class for all QOI errors.
     class Error < StandardError; end
+
+    # Raised when the QOI file format is invalid or corrupted.
     class FormatError < Error; end
+
+    # Raised when the buffer size doesn't match the image dimensions.
+    class BufferSizeError < Error; end
   end
 
+  # Channel count constants for QOI images.
   module Channels
+    # 3-channel RGB image (no alpha).
     RGB = 3
+
+    # 4-channel RGBA image (with alpha).
     RGBA = 4
   end
 
+  # Colorspace constants for QOI images.
   module Colorspace
+    # sRGB with linear alpha.
     SRGB = 0
+
+    # All channels are linear.
     ALL = 1
   end
 
+  # Represents a QOI image with pixel data.
+  #
+  # Images can be created by decoding QOI data or by constructing a new
+  # blank image. Pixel data is stored as a binary string in row-major order,
+  # with either 3 bytes (RGB) or 4 bytes (RGBA) per pixel.
   class Image
     def self.pixel_hash px # :nodoc:
       r = (px >> 24) & 0xFF
@@ -285,19 +320,53 @@ module QOI
       end
     end
 
+    # Decodes a QOI image from a binary string.
+    #
+    # @param buff [String] Binary string containing QOI-encoded data.
+    # @return [Image] The decoded image.
+    # @raise [Errors::FormatError] If the data is not valid QOI format.
     def self.from_buffer buff
       decode buff, BufferHelper
     end
 
+    # Decodes a QOI image from a file.
+    #
+    # @param name [String] Path to the QOI file.
+    # @return [Image] The decoded image.
+    # @raise [Errors::FormatError] If the file is not valid QOI format.
     def self.from_file name
       File.open(name, "rb") do |file|
         decode file, FileHelper
       end
     end
 
+    # @!attribute [r] width
+    #   @return [Integer] The image width in pixels.
+
+    # @!attribute [r] height
+    #   @return [Integer] The image height in pixels.
+
+    # @!attribute [r] channels
+    #   @return [Integer] Number of channels (3 for RGB, 4 for RGBA).
+
+    # @!attribute [r] colorspace
+    #   @return [Integer] Colorspace identifier (see {Colorspace}).
+
     attr_reader :width, :height, :channels, :colorspace
 
+    # Creates a new QOI image.
+    #
+    # @param width [Integer] Image width in pixels.
+    # @param height [Integer] Image height in pixels.
+    # @param channels [Integer] Number of channels (3 or 4).
+    # @param colorspace [Integer] Colorspace (see {Colorspace}).
+    # @param buffer [String, nil] Raw pixel data, or nil to create a blank image.
+    # @raise [Errors::BufferSizeError] If buffer size doesn't match dimensions.
     def initialize width, height, channels, colorspace, buffer = empty_buffer(width, height, channels)
+      expected_size = width * height * channels
+      if buffer.bytesize != expected_size
+        raise Errors::BufferSizeError, "buffer size #{buffer.bytesize} does not match expected size #{expected_size} (#{width}x#{height}x#{channels})"
+      end
       @width = width
       @height = height
       @channels = channels
@@ -307,32 +376,83 @@ module QOI
       @writer = channels == 3 ? RGBWriter : RGBAWriter
     end
 
+    # Encodes the image to QOI format.
+    #
+    # @return [String] Binary string containing the QOI-encoded image.
     def encode
       Image.encode(@width, @height, @channels, @colorspace, @buffer)
     end
 
+    # Returns a copy of the raw pixel data.
+    #
+    # The buffer contains pixels in row-major order, with 3 bytes per pixel
+    # for RGB images or 4 bytes per pixel for RGBA images.
+    #
+    # @return [String] Copy of the pixel data buffer.
     def buffer; @buffer.dup; end
 
+    # Gets the RGBA values of a pixel.
+    #
+    # For RGB images, the alpha value is always 255.
+    #
+    # @param x [Integer] X coordinate (0-indexed from left).
+    # @param y [Integer] Y coordinate (0-indexed from top).
+    # @return [Array<Integer>] Array of [r, g, b, a] values (0-255 each).
     def rgba x, y
       pos = (y * @width + x) * @channels
       @reader.rgba @buffer, pos
     end
 
+    # Gets the RGB values of a pixel.
+    #
+    # @param x [Integer] X coordinate (0-indexed from left).
+    # @param y [Integer] Y coordinate (0-indexed from top).
+    # @return [Array<Integer>] Array of [r, g, b] values (0-255 each).
     def rgb x, y
       pos = (y * @width + x) * @channels
       @reader.rgb @buffer, pos
     end
 
+    # Gets a pixel as a packed 32-bit integer.
+    #
+    # The format is 0xRRGGBBAA (RGBA from high to low bits).
+    # For RGB images, the alpha value is always 0xFF.
+    #
+    # @param x [Integer] X coordinate (0-indexed from left).
+    # @param y [Integer] Y coordinate (0-indexed from top).
+    # @return [Integer] Packed pixel value.
     def pixel x, y
       pos = (y * @width + x) * @channels
       @reader.read @buffer, pos
     end
 
+    # Sets a pixel's RGB values.
+    #
+    # For RGBA images, the alpha is set to 255.
+    # For RGB images, only the RGB values are stored.
+    #
+    # @param x [Integer] X coordinate (0-indexed from left).
+    # @param y [Integer] Y coordinate (0-indexed from top).
+    # @param r [Integer] Red value (0-255).
+    # @param g [Integer] Green value (0-255).
+    # @param b [Integer] Blue value (0-255).
+    # @return [void]
     def set_rgb x, y, r, g, b
       pos = (y * @width + x) * @channels
       @writer.write_at @buffer, pos, r, g, b, 255
     end
 
+    # Sets a pixel's RGBA values.
+    #
+    # For RGB images, the alpha value is ignored.
+    #
+    # @param x [Integer] X coordinate (0-indexed from left).
+    # @param y [Integer] Y coordinate (0-indexed from top).
+    # @param r [Integer] Red value (0-255).
+    # @param g [Integer] Green value (0-255).
+    # @param b [Integer] Blue value (0-255).
+    # @param a [Integer] Alpha value (0-255).
+    # @return [void]
     def set_rgba x, y, r, g, b, a
       pos = (y * @width + x) * @channels
       @writer.write_at @buffer, pos, r, g, b, a
