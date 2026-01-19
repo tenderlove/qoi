@@ -46,24 +46,20 @@ module QOI
 
       pixels_decoded = 0
 
-      while byte = reader.getbyte(ctx, index)
+      while true
+        byte = reader.getbyte(ctx, index)
         index += 1
         break if pixels_decoded >= total_pixels
 
         if byte == 0xFE # QOI_OP_RGB
-          r = reader.getbyte(ctx, index); index += 1
-          g = reader.getbyte(ctx, index); index += 1
-          b = reader.getbyte(ctx, index); index += 1
-          px = (r << 24) | (g << 16) | (b << 8) | (px & 0xFF)
+          px = (reader.read_uint24(ctx, index) << 8) | (px & 0xFF)
+          index += 3
           seen[pixel_hash(px)] = px
           [px].pack("N", buffer: buff)
 
         elsif byte == 0xFF # QOI_OP_RGBA
-          r = reader.getbyte(ctx, index); index += 1
-          g = reader.getbyte(ctx, index); index += 1
-          b = reader.getbyte(ctx, index); index += 1
-          a = reader.getbyte(ctx, index); index += 1
-          px = (r << 24) | (g << 16) | (b << 8) | a
+          px = reader.read_uint32(ctx, index)
+          index += 4
           seen[pixel_hash(px)] = px
           [px].pack("N", buffer: buff)
 
@@ -109,6 +105,14 @@ module QOI
     end
 
     module FileHelper # :nodoc:
+      def self.read_uint24 fh, _
+        (fh.getbyte << 16) | (fh.getbyte << 8) | fh.getbyte
+      end
+
+      def self.read_uint32 fh, _
+        (fh.getbyte << 24) | (fh.getbyte << 16) | (fh.getbyte << 8) | fh.getbyte
+      end
+
       def self.read fh, _, size
         fh.read size
       end
@@ -119,6 +123,15 @@ module QOI
     end
 
     module BufferHelper # :nodoc:
+      def self.read_uint24 buf, offset
+        (buf.unpack1("C", offset: offset) << 16) |
+          buf.unpack1("n", offset: offset + 1)
+      end
+
+      def self.read_uint32 buf, offset
+        buf.unpack1("N", offset: offset)
+      end
+
       def self.read buf, offset, size
         buf.byteslice(offset, size)
       end
