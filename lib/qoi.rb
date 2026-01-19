@@ -105,30 +105,6 @@ module QOI
       new width, height, channels, colorspace, buff
     end
 
-    module RGBReader # :nodoc:
-      def self.read buff, pos
-        (buff.getbyte(pos) << 24) | (buff.getbyte(pos + 1) << 16) | (buff.getbyte(pos + 2) << 8) | 0xFF
-      end
-    end
-
-    module RGBAReader # :nodoc:
-      def self.read buff, pos
-        buff.unpack1("N", offset: pos)
-      end
-    end
-
-    module RGBWriter # :nodoc:
-      def self.write px, buff
-        buff << ((px >> 24) & 0xFF) << ((px >> 16) & 0xFF) << ((px >> 8) & 0xFF)
-      end
-    end
-
-    module RGBAWriter # :nodoc:
-      def self.write px, buff
-        [px].pack("N", buffer: buff)
-      end
-    end
-
     def self.encode width, height, channels, colorspace, buffer
       out = String.new(capacity: 14 + width * height * 5 + 8, encoding: Encoding::BINARY)
 
@@ -216,6 +192,31 @@ module QOI
       out << "\x00\x00\x00\x00\x00\x00\x00\x01"
 
       out
+    end
+
+
+    module RGBReader # :nodoc:
+      def self.read buff, pos
+        (buff.getbyte(pos) << 24) | (buff.getbyte(pos + 1) << 16) | (buff.getbyte(pos + 2) << 8) | 0xFF
+      end
+    end
+
+    module RGBAReader # :nodoc:
+      def self.read buff, pos
+        buff.unpack1("N", offset: pos)
+      end
+    end
+
+    module RGBWriter # :nodoc:
+      def self.write px, buff
+        buff << ((px >> 24) & 0xFF) << ((px >> 16) & 0xFF) << ((px >> 8) & 0xFF)
+      end
+    end
+
+    module RGBAWriter # :nodoc:
+      def self.write px, buff
+        [px].pack("N", buffer: buff)
+      end
     end
 
     module FileHelper # :nodoc:
