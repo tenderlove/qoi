@@ -199,11 +199,27 @@ module QOI
       def self.read buff, pos
         (buff.getbyte(pos) << 24) | (buff.getbyte(pos + 1) << 16) | (buff.getbyte(pos + 2) << 8) | 0xFF
       end
+
+      def self.rgba buff, pos
+        [buff.getbyte(pos), buff.getbyte(pos + 1), buff.getbyte(pos + 2), 255]
+      end
+
+      def self.rgb buff, pos
+        [buff.getbyte(pos), buff.getbyte(pos + 1), buff.getbyte(pos + 2)]
+      end
     end
 
     module RGBAReader # :nodoc:
       def self.read buff, pos
         buff.unpack1("N", offset: pos)
+      end
+
+      def self.rgba buff, pos
+        [buff.getbyte(pos), buff.getbyte(pos + 1), buff.getbyte(pos + 2), buff.getbyte(pos + 3)]
+      end
+
+      def self.rgb buff, pos
+        [buff.getbyte(pos), buff.getbyte(pos + 1), buff.getbyte(pos + 2)]
       end
     end
 
@@ -211,11 +227,24 @@ module QOI
       def self.write px, buff
         buff << ((px >> 24) & 0xFF) << ((px >> 16) & 0xFF) << ((px >> 8) & 0xFF)
       end
+
+      def self.write_at buff, pos, r, g, b, _a
+        buff.setbyte(pos, r)
+        buff.setbyte(pos + 1, g)
+        buff.setbyte(pos + 2, b)
+      end
     end
 
     module RGBAWriter # :nodoc:
       def self.write px, buff
         [px].pack("N", buffer: buff)
+      end
+
+      def self.write_at buff, pos, r, g, b, a
+        buff.setbyte(pos, r)
+        buff.setbyte(pos + 1, g)
+        buff.setbyte(pos + 2, b)
+        buff.setbyte(pos + 3, a)
       end
     end
 
@@ -266,7 +295,7 @@ module QOI
       end
     end
 
-    attr_reader :width, :height, :channels, :colorspace, :buffer
+    attr_reader :width, :height, :channels, :colorspace
 
     def initialize width, height, channels, colorspace, buffer = empty_buffer(width, height, channels)
       @width = width
@@ -274,10 +303,39 @@ module QOI
       @channels = channels
       @colorspace = colorspace
       @buffer = buffer
+      @reader = channels == 3 ? RGBReader : RGBAReader
+      @writer = channels == 3 ? RGBWriter : RGBAWriter
     end
 
     def encode
-      Image.encode(width, height, channels, colorspace, buffer)
+      Image.encode(@width, @height, @channels, @colorspace, @buffer)
+    end
+
+    def buffer; @buffer.dup; end
+
+    def rgba x, y
+      pos = (y * @width + x) * @channels
+      @reader.rgba @buffer, pos
+    end
+
+    def rgb x, y
+      pos = (y * @width + x) * @channels
+      @reader.rgb @buffer, pos
+    end
+
+    def pixel x, y
+      pos = (y * @width + x) * @channels
+      @reader.read @buffer, pos
+    end
+
+    def set_rgb x, y, r, g, b
+      pos = (y * @width + x) * @channels
+      @writer.write_at @buffer, pos, r, g, b, 255
+    end
+
+    def set_rgba x, y, r, g, b, a
+      pos = (y * @width + x) * @channels
+      @writer.write_at @buffer, pos, r, g, b, a
     end
 
     private
